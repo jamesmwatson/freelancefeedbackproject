@@ -1,0 +1,13 @@
+# Generated demonstration state and reports
+.demo/
+__pycache__/
+*.py[cod]
+.venv/
+*.sqlite
+*.sqlite-*
+*.db
+*.mbox
+*.eml
+.env
+.env.*
+*.log

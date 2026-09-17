@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Attachment triage</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:16px/1.4 system-ui,sans-serif;color:#182737;background:#f4f6f8}header,main{padding:14px 20px}header{background:#243c54;color:white;display:flex;align-items:center;justify-content:space-between;gap:12px}h1{font-size:21px;margin:0}button,input,select{font:inherit}button,select,input[type=search],input[type=date]{padding:6px 8px;border:1px solid #aab7c4;border-radius:4px;background:white;color:#182737}button{cursor:pointer}button:hover{background:#e7eef5}button:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #1675c5;outline-offset:2px}a{color:inherit}label{font-size:14px;display:flex;gap:6px;align-items:center}input[type=checkbox]{width:18px;height:18px;accent-color:#255e8d}.filters,.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin-bottom:12px}.filters label:not(.check){display:grid;gap:3px}#q{width:260px}select{max-width:250px}#counts{font-weight:600;margin:10px 0}.hint{color:#506071;font-size:14px}.table-wrap{max-height:65vh;overflow:auto;background:white;border:1px solid #bcc7d1}table{border-collapse:collapse;width:100%;font-size:14px}th{position:sticky;top:0;background:#e6edf3;text-align:left;z-index:1}th,td{padding:7px 9px;border-bottom:1px solid #dbe1e7;vertical-align:top}td.name{min-width:250px;max-width:410px;overflow-wrap:anywhere}td.meta{max-width:290px;overflow-wrap:anywhere}.filename{border:0;padding:0;background:none;text-align:left;color:#155486;font-weight:600;overflow-wrap:anywhere}.selected{box-shadow:inset 4px 0 #246b9e;background:#edf5fc}.status-possible_feedback{border-left:4px solid #367956}.status-rejected{color:#65717e}.triage{min-width:160px}small{display:block;font-size:13px;color:#596878}.pager{display:flex;gap:12px;align-items:center;margin:12px 0}#notice{color:#215936}#error{color:#a22020;white-space:pre-wrap}dialog{width:min(900px,95vw);max-height:85vh;border:1px solid #8fa2b4;border-radius:6px;padding:20px}dialog::backdrop{background:#14243588}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.5 system-ui;background:#f0f3f6;padding:12px}#detailTitle{overflow-wrap:anywhere;font-size:20px}#source{overflow-wrap:anywhere}#help{margin:12px 0}#help p{margin:6px 0}summary{cursor:pointer}@media(max-width:700px){header,main{padding:12px}header{align-items:start}#q{width:210px}.table-wrap{max-height:60vh}}
+</style></head><body>
+<header><h1>Attachment triage · project demonstration</h1><a href="/decisions.csv" download="attachment-triage.csv">Export decisions CSV</a></header>
+<main>
+<p class="hint">The bundled demonstration uses entirely fictional correspondence and attachment summaries.</p>
+<div class="filters">
+<label>Search<input id="q" type="search" placeholder="Filename, subject, sender…"></label>
+<label>File type<select id="extension"><option value="">All types</option></select></label>
+<label>Sender<select id="sender"><option value="">All senders</option></select></label>
+<label>From<input id="from" type="date"></label><label>To<input id="to" type="date"></label>
+<label>Decision<select id="state"><option value="">All decisions</option><option value="unreviewed">Unreviewed</option><option value="possible_feedback">Possible feedback</option><option value="rejected">Rejected</option></select></label>
+<label class="check"><input id="template" type="checkbox">Templates only</label>
+<label class="check"><input id="outgoing" type="checkbox">Include outgoing</label>
+<label>Sort<select id="sort"><option value="filename">Filename</option><option value="date_desc">Newest first</option><option value="date_asc">Oldest first</option><option value="id">Attachment ID</option></select></label>
+<button id="clear">Clear filters</button>
+</div>
+<div id="counts" role="status">Loading attachments…</div>
+<div class="actions"><span>All filtered rows:</span><button data-bulk="possible_feedback">Possible feedback</button><button data-bulk="rejected">Reject</button><button data-bulk="unreviewed">Unreviewed</button><button id="undo" disabled>Undo last change</button><span id="notice" role="status"></span></div>
+<div id="error" role="alert"></div>
+<div class="table-wrap"><table><thead><tr><th>Attachment / type</th><th>Email / sender</th><th>Date / direction</th><th>Size</th><th>Decision</th><th>Template</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div class="pager"><button id="prev">Previous</button><span id="page"></span><button id="next">Next</button><span class="hint">100 rows per page</span></div>
+<details id="help"><summary>Review notes and keyboard shortcuts</summary><p class="hint">Select a row, then P = possible feedback, R = rejected, U = unreviewed, T = toggle template; J/K = next/previous row. Click a filename for context.</p><p class="hint">Template means a recurring form, independently of your decision. Outgoing-only attachments are hidden by default; attachments also received remain visible. Unknown direction stays visible. Sender and date filters must match the same email occurrence.</p><p class="hint">Decisions save immediately to a separate SQLite database. Export includes all attachments and decisions, including hidden rows. No document extraction or classification runs here. Cached document evidence may contain quoted or outgoing text: it is context, not a new incoming message.</p><p id="source" class="hint"></p><p id="missing" class="hint"></p></details>
+</main>
+<dialog id="detail"><button id="closeDetail" style="float:right">Close</button><h2 id="detailTitle"></h2><div id="detailBody"></div></dialog>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const labels={unreviewed:'Unreviewed',possible_feedback:'Possible feedback',rejected:'Rejected'};
+let rows=[],shown=[],page=0,active=null,busy=false,lastChange=null,saveQueue=Promise.resolve();
+const controls=['q','extension','sender','from','to','state','template','outgoing','sort'];
+const prefsKey='attachment-triage-filters-v1';
+function settings(){return Object.fromEntries(controls.map(k=>[k,$(k).type==='checkbox'?$(k).checked:$(k).value]));}
+function visibleOccurrences(r,f){return r.occurrences.filter(o=>f.outgoing||o.direction!=='outgoing');}
+function matchingOccurrences(r,f){return visibleOccurrences(r,f).filter(o=>(!f.sender||o.sender===f.sender)&&(!f.from||(o.date_utc||'').slice(0,10)>=f.from)&&(!f.to||!!o.date_utc&&o.date_utc.slice(0,10)<=f.to));}
+function eligible(r,f){return !r.occurrences.length||visibleOccurrences(r,f).length>0;}
+function match(r,f){
+ if(!eligible(r,f)||f.extension&&r.extension!==f.extension||f.state&&r.triage_status!==f.state||f.template&&!r.template)return false;
+ const occ=matchingOccurrences(r,f);
+ if((f.sender||f.from||f.to)&&!occ.length)return false;
+ const text=[r.first_filename,r.attachment_id,r.extension,r.content_kind,...occ.flatMap(o=>[o.filename,o.subject,o.sender,o.recipients])].join(' ').toLowerCase();
+ return f.q.trim().toLowerCase().split(/\s+/).every(t=>text.includes(t));
+}
+function representative(r,f){return matchingOccurrences(r,f)[0]||{};}
+function render(){
+ const f=settings(),population=rows.filter(r=>eligible(r,f));shown=rows.filter(r=>match(r,f));
+ if(active&&!shown.some(r=>String(r.attachment_id)===active))active=null;
+ shown.sort((a,b)=>f.sort==='id'?Number(a.attachment_id)-Number(b.attachment_id):f.sort.startsWith('date')?((representative(a,f).date_utc||'').localeCompare(representative(b,f).date_utc||''))*(f.sort==='date_desc'?-1:1)||Number(a.attachment_id)-Number(b.attachment_id):(a.first_filename||'').localeCompare(b.first_filename||'')||Number(a.attachment_id)-Number(b.attachment_id));
+ page=Math.min(page,Math.max(0,Math.ceil(shown.length/100)-1));
+ const possible=population.filter(r=>r.triage_status==='possible_feedback').length;
+ const unknown=population.filter(r=>!r.occurrences.length||visibleOccurrences(r,f).some(o=>o.direction==='unknown')).length;
+ $('counts').textContent=`${shown.length.toLocaleString()} shown / ${population.length.toLocaleString()} eligible / ${possible.toLocaleString()} marked possible · ${rows.length-population.length} outgoing-only hidden · ${unknown} with unknown direction`;
+ $('rows').innerHTML=shown.slice(page*100,page*100+100).map(r=>{
+ const o=representative(r,f),id=String(r.attachment_id),n=visibleOccurrences(r,f).length;
+ return `<tr data-id="${esc(id)}" class="status-${r.triage_status} ${active===id?'selected':''}"><td class="name"><button class="filename" data-detail="${esc(id)}">${esc(o.filename||r.first_filename||'(filename unavailable)')}</button><small>#${esc(id)} · ${esc(r.extension||'no extension')} · ${esc(r.content_kind||r.parse_status||'')}${n>1?' · '+n+' emails':''}</small></td><td class="meta">${esc(o.subject||'(subject unavailable)')}<small>${esc(o.sender||'Sender unavailable')}</small></td><td>${esc((o.date_utc||'').slice(0,10)||'Unknown')}<small>${esc(o.direction||'unknown')}</small></td><td>${r.decoded_bytes==null?'—':Math.round(r.decoded_bytes/1024).toLocaleString()+' KB'}</td><td><select class="triage" aria-label="Decision for attachment ${esc(id)}" data-decision="${esc(id)}">${Object.entries(labels).map(([k,v])=>`<option value="${k}" ${r.triage_status===k?'selected':''}>${v}</option>`).join('')}</select></td><td><input type="checkbox" aria-label="Template for attachment ${esc(id)}" data-template="${esc(id)}" ${r.template?'checked':''}></td></tr>`;
+ }).join('')||'<tr><td colspan="6">No attachments match these filters.</td></tr>';
+ $('page').textContent=`Page ${page+1} of ${Math.max(1,Math.ceil(shown.length/100))}`;
+ $('prev').disabled=page===0;$('next').disabled=(page+1)*100>=shown.length;
+ document.querySelectorAll('[data-bulk]').forEach(b=>b.disabled=busy||!shown.length);
+ $('undo').disabled=busy||!lastChange;
+}
+async function api(url,options){const res=await fetch(url,options);const data=await res.json();if(!res.ok)throw Error(data.error||'Request failed');return data;}
+function save(ids,patch,remember=true){saveQueue=saveQueue.then(()=>performSave(ids,patch,remember));return saveQueue;}
+async function performSave(ids,patch,remember=true){
+ busy=true;$('error').textContent='';$('notice').textContent='Saving…';
+ const before=rows.filter(r=>ids.includes(String(r.attachment_id))).map(r=>({id:String(r.attachment_id),triage_status:r.triage_status,template:r.template}));
+ try{const result=await api('/api/decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,...patch})});
+ rows.forEach(r=>{if(ids.includes(String(r.attachment_id)))Object.assign(r,patch,{updated_utc:result.updated_utc});});
+ if(remember)lastChange=before;$('notice').textContent=`Saved ${ids.length} ${ids.length===1?'attachment':'attachments'}.`;
+ }catch(e){$('error').textContent='Not saved: '+e.message;$('notice').textContent='';}
+ finally{busy=false;render();}
+}
+async function detail(id){
+ active=id;render();const r=rows.find(r=>String(r.attachment_id)===id);$('detailTitle').textContent=r.first_filename||'Attachment '+id;$('detailBody').textContent='Loading context…';$('detail').showModal();
+ try{const d=await api('/api/detail?id='+encodeURIComponent(id));const f=settings();
+ $('detailBody').innerHTML=`<p class="hint">Attachment #${esc(id)} · SHA-256: ${esc(r.sha256)}</p>`+visibleOccurrences(r,f).map(o=>`<h3>${esc(o.subject||'Email')}</h3><p>${esc(o.date_utc||'Unknown date')} · ${esc(o.direction)}<br>From: ${esc(o.sender||'Unavailable')}<br>To / CC: ${esc(o.recipients||'Unavailable')}<br>Filename: ${esc(o.filename||r.first_filename)}</p><pre>${esc(d.contexts.find(c=>c.occurrence_id===o.occurrence_id)?.context||'No cached email text available.')}</pre>`).join('')+`<details><summary>Existing document evidence</summary><pre>${esc(d.summary||'No cached document excerpt available.')}</pre><pre>${esc(d.structure||'')}</pre></details>`;
+ }catch(e){$('detailBody').textContent=e.message;}
+}
+controls.forEach(k=>$(k).addEventListener('input',()=>{page=0;try{localStorage.setItem(prefsKey,JSON.stringify(settings()));}catch{}render();}));
+$('clear').onclick=()=>{controls.forEach(k=>{$(k).type==='checkbox'?$(k).checked=false:$(k).value=k==='sort'?'filename':'';});page=0;try{localStorage.removeItem(prefsKey);}catch{}render();};
+$('prev').onclick=()=>{page--;render();};$('next').onclick=()=>{page++;render();};$('closeDetail').onclick=()=>$('detail').close();
+document.querySelectorAll('[data-bulk]').forEach(b=>b.onclick=()=>{const ids=shown.map(r=>String(r.attachment_id));if(ids.length>1&&!confirm(`Mark all ${ids.length} filtered attachments as ${labels[b.dataset.bulk]}?`))return;save(ids,{triage_status:b.dataset.bulk});});
+$('rows').onclick=e=>{const tr=e.target.closest('tr[data-id]');if(!tr)return;active=tr.dataset.id;document.querySelectorAll('tr.selected').forEach(r=>r.classList.remove('selected'));tr.classList.add('selected');if(e.target.dataset.detail)detail(active);};
+$('rows').onchange=e=>{if(e.target.dataset.decision)save([e.target.dataset.decision],{triage_status:e.target.value});if(e.target.dataset.template)save([e.target.dataset.template],{template:e.target.checked});};
+$('undo').onclick=async()=>{const changes=lastChange;if(!changes||busy)return;lastChange=null;for(const r of changes)await save([r.id],{triage_status:r.triage_status,template:r.template},false);render();};
+document.addEventListener('keydown',e=>{if(e.ctrlKey||e.altKey||e.metaKey||$('detail').open||/INPUT|SELECT|TEXTAREA/.test(e.target.tagName))return;const key=e.key.toLowerCase();let i=shown.findIndex(r=>String(r.attachment_id)===active);if(key==='j'||key==='k'){i=Math.max(0,Math.min(shown.length-1,i+(key==='j'?1:-1)));if(shown[i]){active=String(shown[i].attachment_id);page=Math.floor(i/100);render();document.querySelector('tr.selected')?.scrollIntoView({block:'nearest'});}e.preventDefault();return;}if(!active)return;if(['p','r','u'].includes(key)){save([active],{triage_status:{p:'possible_feedback',r:'rejected',u:'unreviewed'}[key]});e.preventDefault();}if(key==='t'){const r=rows.find(r=>String(r.attachment_id)===active);save([active],{template:!r.template});e.preventDefault();}});
+async function start(){try{const d=await api('/api/data');rows=d.rows;const options=(id,values)=>values.sort().forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;$(id).append(o);});options('extension',[...new Set(rows.map(r=>r.extension).filter(Boolean))]);options('sender',[...new Set(rows.flatMap(r=>r.occurrences.map(o=>o.sender)).filter(Boolean))]);$('sender').disabled=!d.sender_available;$('source').textContent='Source: '+d.source;$('missing').textContent=d.sender_available?'':'Sender and recipient metadata are unavailable. Add --corpus with the matching feedback-corpus.sqlite to show them.';try{const f=JSON.parse(localStorage.getItem(prefsKey)||'{}');controls.forEach(k=>{if(k in f)$(k).type==='checkbox'?$(k).checked=!!f[k]:$(k).value=f[k];});}catch{}render();}catch(e){$('counts').textContent='Could not load inventory';$('error').textContent=e.message;}}
+start();
+</script></body></html>

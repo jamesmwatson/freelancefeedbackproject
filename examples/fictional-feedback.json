@@ -1,0 +1,91 @@
+{
+  "notice": "Entirely fictional demonstration data. No source correspondence is reproduced or paraphrased.",
+  "attachments": [
+    {
+      "id": 1,
+      "filename": "review-notes.txt",
+      "template": false,
+      "text": "The revised shutdown step is clear. You identified that the source gave two different waiting times and asked for clarification before delivery. For future revisions, use the approved term consistently in the headings."
+    },
+    {
+      "id": 2,
+      "filename": "blank-review-form.txt",
+      "template": true,
+      "text": "Review form\nQuality: [enter observation]\nTerminology: [enter observation]\nReviewer: [enter role]"
+    },
+    {
+      "id": 3,
+      "filename": "delivery-checklist.txt",
+      "template": false,
+      "text": "Files delivered. All requested sections included. This is an outgoing delivery checklist, not reviewer feedback."
+    },
+    {
+      "id": 4,
+      "filename": "layout-note.txt",
+      "template": false,
+      "text": "Could the diagram labels move to the next page? The current placement may be intentional; please check the layout brief."
+    }
+  ],
+  "messages": [
+    {
+      "id": 1,
+      "sender": "Reviewer <reviewer@example.test>",
+      "recipient": "Practitioner <practitioner@example.test>",
+      "date": "2000-01-03T10:00:00+00:00",
+      "subject": "Review notes for the fictional instructions",
+      "body": "Please see the attached review notes.",
+      "direction": "incoming",
+      "attachment_id": 1
+    },
+    {
+      "id": 2,
+      "sender": "Coordinator <coordinator@example.test>",
+      "recipient": "Practitioner <practitioner@example.test>",
+      "date": "2000-01-04T10:00:00+00:00",
+      "subject": "Copy of the same review notes",
+      "body": "Here is another copy for your records.",
+      "direction": "incoming",
+      "attachment_id": 1,
+      "reply_to": 1
+    },
+    {
+      "id": 3,
+      "sender": "Coordinator <coordinator@example.test>",
+      "recipient": "Practitioner <practitioner@example.test>",
+      "date": "2000-01-05T10:00:00+00:00",
+      "subject": "Blank form for a future review",
+      "body": "Please use this blank form next time.",
+      "direction": "incoming",
+      "attachment_id": 2
+    },
+    {
+      "id": 4,
+      "sender": "Practitioner <practitioner@example.test>",
+      "recipient": "Coordinator <coordinator@example.test>",
+      "date": "2000-01-06T10:00:00+00:00",
+      "subject": "Delivery checklist",
+      "body": "Attached is my delivery checklist.",
+      "direction": "outgoing",
+      "attachment_id": 3
+    },
+    {
+      "id": 5,
+      "sender": "Reviewer <reviewer@example.test>",
+      "recipient": "Practitioner <practitioner@example.test>",
+      "date": "2000-01-07T10:00:00+00:00",
+      "subject": "Question about layout",
+      "body": "Please check the attached layout question.",
+      "direction": "incoming",
+      "attachment_id": 4
+    }
+  ],
+  "example_verification": {
+    "message_id": 1,
+    "attachment_id": 1,
+    "body_decision": "no_useful_feedback",
+    "attachment_decision": "contains_feedback",
+    "showcase": true,
+    "quote": "You identified that the source gave two different waiting times and asked for clarification before delivery.",
+    "locator": "review-notes.txt, paragraph 1"
+  }
+}

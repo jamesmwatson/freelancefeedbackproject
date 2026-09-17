@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Fictional attachment-triage preview</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:16px/1.4 system-ui,sans-serif;color:#182737;background:#f4f6f8}header,main{padding:14px 20px}header{background:#243c54;color:white;display:flex;align-items:center;justify-content:space-between;gap:12px}h1{font-size:21px;margin:0}button,input,select{font:inherit}button,select,input[type=search],input[type=date]{padding:6px 8px;border:1px solid #aab7c4;border-radius:4px;background:white;color:#182737}button{cursor:pointer}button:hover{background:#e7eef5}button:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #1675c5;outline-offset:2px}a{color:inherit}label{font-size:14px;display:flex;gap:6px;align-items:center}input[type=checkbox]{width:18px;height:18px;accent-color:#255e8d}.filters,.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin-bottom:12px}.filters label:not(.check){display:grid;gap:3px}#q{width:260px}select{max-width:250px}#counts{font-weight:600;margin:10px 0}.hint{color:#506071;font-size:14px}.table-wrap{max-height:65vh;overflow:auto;background:white;border:1px solid #bcc7d1}table{border-collapse:collapse;width:100%;font-size:14px}th{position:sticky;top:0;background:#e6edf3;text-align:left;z-index:1}th,td{padding:7px 9px;border-bottom:1px solid #dbe1e7;vertical-align:top}td.name{min-width:250px;max-width:410px;overflow-wrap:anywhere}td.meta{max-width:290px;overflow-wrap:anywhere}.filename{border:0;padding:0;background:none;text-align:left;color:#155486;font-weight:600;overflow-wrap:anywhere}.selected{box-shadow:inset 4px 0 #246b9e;background:#edf5fc}.status-possible_feedback{border-left:4px solid #367956}.status-rejected{color:#65717e}.triage{min-width:160px}small{display:block;font-size:13px;color:#596878}.pager{display:flex;gap:12px;align-items:center;margin:12px 0}#notice{color:#215936}#error{color:#a22020;white-space:pre-wrap}dialog{width:min(900px,95vw);max-height:85vh;border:1px solid #8fa2b4;border-radius:6px;padding:20px}dialog::backdrop{background:#14243588}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.5 system-ui;background:#f0f3f6;padding:12px}#detailTitle{overflow-wrap:anywhere;font-size:20px}#source{overflow-wrap:anywhere}#help{margin:12px 0}#help p{margin:6px 0}summary{cursor:pointer}@media(max-width:700px){header,main{padding:12px}header{align-items:start}#q{width:210px}.table-wrap{max-height:60vh}}
+</style></head><body>
+<header><h1>Attachment triage · fictional preview</h1><a href="#" id="exportPreview" download="attachment-triage.csv">Export decisions CSV</a></header>
+<main>
+<p class="hint">Entirely fictional preview. Changes last only in this tab; reload to reset. Use the Python demo for persistent decisions.</p>
+<div class="filters">
+<label>Search<input id="q" type="search" placeholder="Filename, subject, sender…"></label>
+<label>File type<select id="extension"><option value="">All types</option></select></label>
+<label>Sender<select id="sender"><option value="">All senders</option></select></label>
+<label>From<input id="from" type="date"></label><label>To<input id="to" type="date"></label>
+<label>Decision<select id="state"><option value="">All decisions</option><option value="unreviewed">Unreviewed</option><option value="possible_feedback">Possible feedback</option><option value="rejected">Rejected</option></select></label>
+<label class="check"><input id="template" type="checkbox">Templates only</label>
+<label class="check"><input id="outgoing" type="checkbox">Include outgoing</label>
+<label>Sort<select id="sort"><option value="filename">Filename</option><option value="date_desc">Newest first</option><option value="date_asc">Oldest first</option><option value="id">Attachment ID</option></select></label>
+<button id="clear">Clear filters</button>
+</div>
+<div id="counts" role="status">Loading attachments…</div>
+<div class="actions"><span>All filtered rows:</span><button data-bulk="possible_feedback">Possible feedback</button><button data-bulk="rejected">Reject</button><button data-bulk="unreviewed">Unreviewed</button><button id="undo" disabled>Undo last change</button><span id="notice" role="status"></span></div>
+<div id="error" role="alert"></div>
+<div class="table-wrap"><table><thead><tr><th>Attachment / type</th><th>Email / sender</th><th>Date / direction</th><th>Size</th><th>Decision</th><th>Template</th></tr></thead><tbody id="rows"></tbody></table></div>
+<div class="pager"><button id="prev">Previous</button><span id="page"></span><button id="next">Next</button><span class="hint">100 rows per page</span></div>
+<details id="help"><summary>Review notes and keyboard shortcuts</summary><p class="hint">Select a row, then P = possible feedback, R = rejected, U = unreviewed, T = toggle template; J/K = next/previous row. Click a filename for context.</p><p class="hint">Template means a recurring form, independently of your decision. Outgoing-only attachments are hidden by default; attachments also received remain visible. Unknown direction stays visible. Sender and date filters must match the same email occurrence.</p><p class="hint">This preview keeps decisions in memory; the Python application saves them to a separate SQLite database. Export includes all attachments and decisions, including hidden rows. No document extraction or classification runs here. Cached document evidence may contain quoted or outgoing text: it is context, not a new incoming message.</p><p id="source" class="hint"></p><p id="missing" class="hint"></p></details>
+</main>
+<dialog id="detail"><button id="closeDetail" style="float:right">Close</button><h2 id="detailTitle"></h2><div id="detailBody"></div></dialog>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const labels={unreviewed:'Unreviewed',possible_feedback:'Possible feedback',rejected:'Rejected'};
+let rows=[],shown=[],page=0,active=null,busy=false,lastChange=null,saveQueue=Promise.resolve();
+const controls=['q','extension','sender','from','to','state','template','outgoing','sort'];
+const prefsKey='fictional-attachment-triage-preview-v1';
+function settings(){return Object.fromEntries(controls.map(k=>[k,$(k).type==='checkbox'?$(k).checked:$(k).value]));}
+function visibleOccurrences(r,f){return r.occurrences.filter(o=>f.outgoing||o.direction!=='outgoing');}
+function matchingOccurrences(r,f){return visibleOccurrences(r,f).filter(o=>(!f.sender||o.sender===f.sender)&&(!f.from||(o.date_utc||'').slice(0,10)>=f.from)&&(!f.to||!!o.date_utc&&o.date_utc.slice(0,10)<=f.to));}
+function eligible(r,f){return !r.occurrences.length||visibleOccurrences(r,f).length>0;}
+function match(r,f){
+ if(!eligible(r,f)||f.extension&&r.extension!==f.extension||f.state&&r.triage_status!==f.state||f.template&&!r.template)return false;
+ const occ=matchingOccurrences(r,f);
+ if((f.sender||f.from||f.to)&&!occ.length)return false;
+ const text=[r.first_filename,r.attachment_id,r.extension,r.content_kind,...occ.flatMap(o=>[o.filename,o.subject,o.sender,o.recipients])].join(' ').toLowerCase();
+ return f.q.trim().toLowerCase().split(/\s+/).every(t=>text.includes(t));
+}
+function representative(r,f){return matchingOccurrences(r,f)[0]||{};}
+function render(){
+ const f=settings(),population=rows.filter(r=>eligible(r,f));shown=rows.filter(r=>match(r,f));
+ if(active&&!shown.some(r=>String(r.attachment_id)===active))active=null;
+ shown.sort((a,b)=>f.sort==='id'?Number(a.attachment_id)-Number(b.attachment_id):f.sort.startsWith('date')?((representative(a,f).date_utc||'').localeCompare(representative(b,f).date_utc||''))*(f.sort==='date_desc'?-1:1)||Number(a.attachment_id)-Number(b.attachment_id):(a.first_filename||'').localeCompare(b.first_filename||'')||Number(a.attachment_id)-Number(b.attachment_id));
+ page=Math.min(page,Math.max(0,Math.ceil(shown.length/100)-1));
+ const possible=population.filter(r=>r.triage_status==='possible_feedback').length;
+ const unknown=population.filter(r=>!r.occurrences.length||visibleOccurrences(r,f).some(o=>o.direction==='unknown')).length;
+ $('counts').textContent=`${shown.length.toLocaleString()} shown / ${population.length.toLocaleString()} eligible / ${possible.toLocaleString()} marked possible · ${rows.length-population.length} outgoing-only hidden · ${unknown} with unknown direction`;
+ $('rows').innerHTML=shown.slice(page*100,page*100+100).map(r=>{
+ const o=representative(r,f),id=String(r.attachment_id),n=visibleOccurrences(r,f).length;
+ return `<tr data-id="${esc(id)}" class="status-${r.triage_status} ${active===id?'selected':''}"><td class="name"><button class="filename" data-detail="${esc(id)}">${esc(o.filename||r.first_filename||'(filename unavailable)')}</button><small>#${esc(id)} · ${esc(r.extension||'no extension')} · ${esc(r.content_kind||r.parse_status||'')}${n>1?' · '+n+' emails':''}</small></td><td class="meta">${esc(o.subject||'(subject unavailable)')}<small>${esc(o.sender||'Sender unavailable')}</small></td><td>${esc((o.date_utc||'').slice(0,10)||'Unknown')}<small>${esc(o.direction||'unknown')}</small></td><td>${r.decoded_bytes==null?'—':Math.round(r.decoded_bytes/1024).toLocaleString()+' KB'}</td><td><select class="triage" aria-label="Decision for attachment ${esc(id)}" data-decision="${esc(id)}">${Object.entries(labels).map(([k,v])=>`<option value="${k}" ${r.triage_status===k?'selected':''}>${v}</option>`).join('')}</select></td><td><input type="checkbox" aria-label="Template for attachment ${esc(id)}" data-template="${esc(id)}" ${r.template?'checked':''}></td></tr>`;
+ }).join('')||'<tr><td colspan="6">No attachments match these filters.</td></tr>';
+ $('page').textContent=`Page ${page+1} of ${Math.max(1,Math.ceil(shown.length/100))}`;
+ $('prev').disabled=page===0;$('next').disabled=(page+1)*100>=shown.length;
+ document.querySelectorAll('[data-bulk]').forEach(b=>b.disabled=busy||!shown.length);
+ $('undo').disabled=busy||!lastChange;
+}
+const fixture={"data": {"rows": [{"attachment_id": 1, "sha256": "02ccd7a48451c2ceaf546e01ce103c06d83190e033ebc7be9edd499aaf180bc8", "extension": ".txt", "first_filename": "review-notes.txt", "decoded_bytes": 218, "content_kind": "plain_text", "parse_status": "fictional_fixture", "eligible": 1, "occurrences": [{"occurrence_id": 1, "attachment_id": 1, "message_id": 1, "date_utc": "2000-01-03T10:00:00+00:00", "direction": "incoming", "filename": "review-notes.txt", "subject": "Review notes for the fictional instructions", "sender": "Reviewer \u003creviewer@example.test>", "recipients": "Practitioner \u003cpractitioner@example.test>"}, {"occurrence_id": 2, "attachment_id": 1, "message_id": 2, "date_utc": "2000-01-04T10:00:00+00:00", "direction": "incoming", "filename": "review-notes.txt", "subject": "Copy of the same review notes", "sender": "Coordinator \u003ccoordinator@example.test>", "recipients": "Practitioner \u003cpractitioner@example.test>"}], "triage_status": "unreviewed", "template": false, "updated_utc": null}, {"attachment_id": 2, "sha256": "276f9fb90e7e6e38bd26b758aa79654879aabc92da887957271c9dc922424e1b", "extension": ".txt", "first_filename": "blank-review-form.txt", "decoded_bytes": 96, "content_kind": "plain_text", "parse_status": "fictional_fixture", "eligible": 1, "occurrences": [{"occurrence_id": 3, "attachment_id": 2, "message_id": 3, "date_utc": "2000-01-05T10:00:00+00:00", "direction": "incoming", "filename": "blank-review-form.txt", "subject": "Blank form for a future review", "sender": "Coordinator \u003ccoordinator@example.test>", "recipients": "Practitioner \u003cpractitioner@example.test>"}], "triage_status": "unreviewed", "template": false, "updated_utc": null}, {"attachment_id": 3, "sha256": "1139ba58938597edf55036bb7ff7151a26bac715539fd24bdee06d9019862cac", "extension": ".txt", "first_filename": "delivery-checklist.txt", "decoded_bytes": 112, "content_kind": "plain_text", "parse_status": "fictional_fixture", "eligible": 1, "occurrences": [{"occurrence_id": 4, "attachment_id": 3, "message_id": 4, "date_utc": "2000-01-06T10:00:00+00:00", "direction": "outgoing", "filename": "delivery-checklist.txt", "subject": "Delivery checklist", "sender": "Practitioner \u003cpractitioner@example.test>", "recipients": "Coordinator \u003ccoordinator@example.test>"}], "triage_status": "unreviewed", "template": false, "updated_utc": null}, {"attachment_id": 4, "sha256": "e2106b4f996d816385dc5de607c07f9547cdf257904d6032e3d560d0b18e63a1", "extension": ".txt", "first_filename": "layout-note.txt", "decoded_bytes": 120, "content_kind": "plain_text", "parse_status": "fictional_fixture", "eligible": 1, "occurrences": [{"occurrence_id": 5, "attachment_id": 4, "message_id": 5, "date_utc": "2000-01-07T10:00:00+00:00", "direction": "incoming", "filename": "layout-note.txt", "subject": "Question about layout", "sender": "Reviewer \u003creviewer@example.test>", "recipients": "Practitioner \u003cpractitioner@example.test>"}], "triage_status": "unreviewed", "template": false, "updated_utc": null}], "source": "Fictional in-memory preview", "source_kind": "attachments", "sender_available": true}, "details": {"1": {"summary": "The revised shutdown step is clear. You identified that the source gave two different waiting times and asked for clarification before delivery. For future revisions, use the approved term consistently in the headings.", "structure": "{\"fictional\": true}", "contexts": [{"occurrence_id": 1, "context": "Please see the attached review notes."}, {"occurrence_id": 2, "context": "Here is another copy for your records."}]}, "2": {"summary": "Review form\nQuality: [enter observation]\nTerminology: [enter observation]\nReviewer: [enter role]", "structure": "{\"fictional\": true}", "contexts": [{"occurrence_id": 3, "context": "Please use this blank form next time."}]}, "3": {"summary": "Files delivered. All requested sections included. This is an outgoing delivery checklist, not reviewer feedback.", "structure": "{\"fictional\": true}", "contexts": [{"occurrence_id": 4, "context": "Attached is my delivery checklist."}]}, "4": {"summary": "Could the diagram labels move to the next page? The current placement may be intentional; please check the layout brief.", "structure": "{\"fictional\": true}", "contexts": [{"occurrence_id": 5, "context": "Please check the attached layout question."}]}}};
+async function api(url,options){
+ if(url==='/api/data')return fixture.data;
+ if(url.startsWith('/api/detail?id='))return fixture.details[decodeURIComponent(url.split('=')[1])];
+ if(url==='/api/decision'&&options){
+  const patch=JSON.parse(options.body),now=new Date().toISOString();
+  fixture.data.rows.forEach(r=>{if(patch.ids.includes(String(r.attachment_id))){
+   if('triage_status' in patch)r.triage_status=patch.triage_status;
+   if('template' in patch)r.template=patch.template;
+   r.updated_utc=now;
+  }});return {updated_utc:now};
+ }throw Error('Unknown preview route');
+}
+$('exportPreview').onclick=e=>{
+ e.preventDefault();
+ const lines=['attachment_id,sha256,triage_status,template,updated_utc',...fixture.data.rows.map(r=>[r.attachment_id,r.sha256,r.triage_status,Number(r.template),r.updated_utc||''].join(','))];
+ const url=URL.createObjectURL(new Blob([lines.join('\n')+'\n'],{type:'text/csv'}));
+ const a=document.createElement('a');a.href=url;a.download='fictional-decisions.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+};
+
+function save(ids,patch,remember=true){saveQueue=saveQueue.then(()=>performSave(ids,patch,remember));return saveQueue;}
+async function performSave(ids,patch,remember=true){
+ busy=true;$('error').textContent='';$('notice').textContent='Saving…';
+ const before=rows.filter(r=>ids.includes(String(r.attachment_id))).map(r=>({id:String(r.attachment_id),triage_status:r.triage_status,template:r.template}));
+ try{const result=await api('/api/decision',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,...patch})});
+ rows.forEach(r=>{if(ids.includes(String(r.attachment_id)))Object.assign(r,patch,{updated_utc:result.updated_utc});});
+ if(remember)lastChange=before;$('notice').textContent=`Saved ${ids.length} ${ids.length===1?'attachment':'attachments'}.`;
+ }catch(e){$('error').textContent='Not saved: '+e.message;$('notice').textContent='';}
+ finally{busy=false;render();}
+}
+async function detail(id){
+ active=id;render();const r=rows.find(r=>String(r.attachment_id)===id);$('detailTitle').textContent=r.first_filename||'Attachment '+id;$('detailBody').textContent='Loading context…';$('detail').showModal();
+ try{const d=await api('/api/detail?id='+encodeURIComponent(id));const f=settings();
+ $('detailBody').innerHTML=`<p class="hint">Attachment #${esc(id)} · SHA-256: ${esc(r.sha256)}</p>`+visibleOccurrences(r,f).map(o=>`<h3>${esc(o.subject||'Email')}</h3><p>${esc(o.date_utc||'Unknown date')} · ${esc(o.direction)}<br>From: ${esc(o.sender||'Unavailable')}<br>To / CC: ${esc(o.recipients||'Unavailable')}<br>Filename: ${esc(o.filename||r.first_filename)}</p><pre>${esc(d.contexts.find(c=>c.occurrence_id===o.occurrence_id)?.context||'No cached email text available.')}</pre>`).join('')+`<details><summary>Existing document evidence</summary><pre>${esc(d.summary||'No cached document excerpt available.')}</pre><pre>${esc(d.structure||'')}</pre></details>`;
+ }catch(e){$('detailBody').textContent=e.message;}
+}
+controls.forEach(k=>$(k).addEventListener('input',()=>{page=0;try{void 0;}catch{}render();}));
+$('clear').onclick=()=>{controls.forEach(k=>{$(k).type==='checkbox'?$(k).checked=false:$(k).value=k==='sort'?'filename':'';});page=0;try{void 0;}catch{}render();};
+$('prev').onclick=()=>{page--;render();};$('next').onclick=()=>{page++;render();};$('closeDetail').onclick=()=>$('detail').close();
+document.querySelectorAll('[data-bulk]').forEach(b=>b.onclick=()=>{const ids=shown.map(r=>String(r.attachment_id));if(ids.length>1&&!confirm(`Mark all ${ids.length} filtered attachments as ${labels[b.dataset.bulk]}?`))return;save(ids,{triage_status:b.dataset.bulk});});
+$('rows').onclick=e=>{const tr=e.target.closest('tr[data-id]');if(!tr)return;active=tr.dataset.id;document.querySelectorAll('tr.selected').forEach(r=>r.classList.remove('selected'));tr.classList.add('selected');if(e.target.dataset.detail)detail(active);};
+$('rows').onchange=e=>{if(e.target.dataset.decision)save([e.target.dataset.decision],{triage_status:e.target.value});if(e.target.dataset.template)save([e.target.dataset.template],{template:e.target.checked});};
+$('undo').onclick=async()=>{const changes=lastChange;if(!changes||busy)return;lastChange=null;for(const r of changes)await save([r.id],{triage_status:r.triage_status,template:r.template},false);render();};
+document.addEventListener('keydown',e=>{if(e.ctrlKey||e.altKey||e.metaKey||$('detail').open||/INPUT|SELECT|TEXTAREA/.test(e.target.tagName))return;const key=e.key.toLowerCase();let i=shown.findIndex(r=>String(r.attachment_id)===active);if(key==='j'||key==='k'){i=Math.max(0,Math.min(shown.length-1,i+(key==='j'?1:-1)));if(shown[i]){active=String(shown[i].attachment_id);page=Math.floor(i/100);render();document.querySelector('tr.selected')?.scrollIntoView({block:'nearest'});}e.preventDefault();return;}if(!active)return;if(['p','r','u'].includes(key)){save([active],{triage_status:{p:'possible_feedback',r:'rejected',u:'unreviewed'}[key]});e.preventDefault();}if(key==='t'){const r=rows.find(r=>String(r.attachment_id)===active);save([active],{template:!r.template});e.preventDefault();}});
+async function start(){try{const d=await api('/api/data');rows=d.rows;const options=(id,values)=>values.sort().forEach(v=>{const o=document.createElement('option');o.value=v;o.textContent=v;$(id).append(o);});options('extension',[...new Set(rows.map(r=>r.extension).filter(Boolean))]);options('sender',[...new Set(rows.flatMap(r=>r.occurrences.map(o=>o.sender)).filter(Boolean))]);$('sender').disabled=!d.sender_available;$('source').textContent='Source: '+d.source;$('missing').textContent=d.sender_available?'':'Sender and recipient metadata are unavailable. Add --corpus with the matching feedback-corpus.sqlite to show them.';try{const f=JSON.parse('{}');controls.forEach(k=>{if(k in f)$(k).type==='checkbox'?$(k).checked=!!f[k]:$(k).value=f[k];});}catch{}render();}catch(e){$('counts').textContent='Could not load inventory';$('error').textContent=e.message;}}
+start();
+</script></body></html>

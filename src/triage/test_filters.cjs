@@ -1,0 +1,25 @@
+// Optional focused test of the actual UI filter functions; no browser dependency.
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const html=fs.readFileSync(__dirname+'/index.html','utf8');
+const js=html.split('<script>')[1].split('</script>')[0];
+new vm.Script(js);
+const ctx={};vm.createContext(ctx);
+vm.runInContext(js.slice(0,js.indexOf('function render()')),ctx);
+const f={q:'review',extension:'.xlsx',sender:'Alice',from:'2026-01-01',to:'2026-12-31',state:'unreviewed',template:false,outgoing:false};
+const row={attachment_id:12,first_filename:'review.xlsx',extension:'.xlsx',triage_status:'unreviewed',template:false,occurrences:[{direction:'incoming',sender:'Alice',date_utc:'2026-09-01',subject:'Evaluation'}]};
+assert.equal(ctx.match(row,f),true);
+assert.equal(ctx.match({...row,triage_status:'rejected'},f),false);
+assert.equal(ctx.match({...row,template:true},{...f,template:true}),true);
+assert.equal(ctx.match(row,{...f,template:true}),false);
+const outgoing={...row,occurrences:[{...row.occurrences[0],direction:'outgoing'}]};
+assert.equal(ctx.match(outgoing,f),false);
+assert.equal(ctx.match(outgoing,{...f,outgoing:true}),true);
+assert.equal(ctx.match({...row,occurrences:[{...row.occurrences[0],direction:'unknown'}]},f),true);
+const mixed={...row,occurrences:[...row.occurrences,...outgoing.occurrences]};
+assert.equal(ctx.visibleOccurrences(mixed,f).length,1);
+const crossed={...row,occurrences:[{direction:'incoming',sender:'Alice',date_utc:'2025-01-01'},{direction:'incoming',sender:'Bob',date_utc:'2026-09-01'}]};
+assert.equal(ctx.match(crossed,f),false);
+assert.equal(ctx.match(row,{...f,q:'missing'}),false);
+assert.equal(ctx.match(row,{...f,extension:'.docx'}),false);
+assert.equal(ctx.match(row,{...f,from:'2026-10-01'}),false);
+console.log('UI JavaScript syntax and 12 combined/direction/template filter checks passed.');
