@@ -1,24 +1,24 @@
 # Feedback: turning correspondence into career evidence
 
-A personal data project for finding useful professional feedback across a large
-archive of emails and documents, reviewing it systematically, and turning it
-into traceable evidence for job applications.
+A personal project for finding useful professional feedback across a large archive of emails and documents, reviewing it systematically, and turning it into traceable evidence for job applications.
+
+The key design decision was to keep **human review authoritative**. Automation and local AI helped find likely candidates and speed up review, but did not decide what counted as evidence.
 
 **[Try the fictional interactive demo](https://quietlytechnical.com/projects/feedback-demo/)**
 
 ![Fictional attachment-triage interface](attachmenttriage.png)
 
-*An entirely fictional dataset running through the attachment-review interface.*
+*Fictional data running through the attachment-review interface.*
 
 ## What I built
 
-- Python tooling to inventory and process a large mailbox archive
+- Python tooling for mailbox inventory and structured processing
 - Local model-assisted candidate discovery and extraction diagnostics
 - Review interfaces for conversations and attachments
 - Filters, bulk decisions and resumable review state
 - SQLite-backed persistence and evidence tracking
-- A frozen evidence snapshot preserving source relationships and review decisions
-- Two final outputs: an application-facing evidence register and a broader career retrospective
+- A frozen evidence snapshot preserving provenance and human decisions
+- An application-facing evidence register and broader career retrospective
 
 ## Why this was harder than a search problem
 
@@ -59,4 +59,4 @@ The included code represents selected parts of the workflow rather than a packag
 
 ## AI use
 
-AI tools assisted with code development, candidate discovery and synthesis work. I defined the review categories, evidence rules and workflow, made the final evidence decisions, and decided where automation was and was not appropriate.
+AI tools assisted with code development, candidate discovery and synthesis. I defined the review categories, evidence rules and workflow, made the final evidence decisions, and decided where automation was and was not appropriate.
